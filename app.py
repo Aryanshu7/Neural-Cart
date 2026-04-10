@@ -2,58 +2,20 @@ import streamlit as st
 import tensorflow as tf
 import numpy as np
 from PIL import Image
+import time
+import speech_recognition as sr
+import pyttsx3
 
-# -------------------- PAGE CONFIG --------------------
+# -------------------- CONFIG --------------------
 st.set_page_config(page_title="Neural Cart", layout="centered")
 
-# -------------------- UI STYLE --------------------
-st.markdown("""
-<style>
-.stApp {
-    background: linear-gradient(135deg, #020617, #0f172a);
-    color: white;
-}
-
-.block-container {
-    padding-top: 2rem;
-}
-
-h1, h2, h3 {
-    text-align: center;
-}
-
-.stButton>button {
-    background: linear-gradient(45deg, #38bdf8, #0ea5e9);
-    color: black;
-    border-radius: 12px;
-    height: 3em;
-    width: 100%;
-    font-weight: bold;
-}
-
-.card {
-    background: #1e293b;
-    padding: 15px;
-    border-radius: 15px;
-    margin-bottom: 15px;
-}
-</style>
-""", unsafe_allow_html=True)
-
-# -------------------- HEADER --------------------
-st.markdown("""
-<h1>🧠 Neural Cart</h1>
-<p style='text-align:center; color:gray;'>AI-powered smart shopping experience</p>
-""", unsafe_allow_html=True)
-
-# -------------------- LOAD MODEL --------------------
+# -------------------- MODEL --------------------
 @st.cache_resource
 def load_model():
     return tf.keras.models.load_model("keras_model.h5", compile=False)
 
 model = load_model()
 
-# -------------------- LABELS --------------------
 def load_labels():
     labels = []
     with open("labels.txt", "r") as f:
@@ -73,14 +35,6 @@ prices = {
     "cocacola": 40
 }
 
-images = {
-    "maggie": "https://upload.wikimedia.org/wikipedia/commons/7/7b/Maggi_noodles.jpg",
-    "soap": "https://upload.wikimedia.org/wikipedia/commons/3/3a/Bar_of_soap.jpg",
-    "lays": "https://upload.wikimedia.org/wikipedia/commons/6/69/Lay%27s_classic.jpg",
-    "oreo": "https://upload.wikimedia.org/wikipedia/commons/6/6f/Oreo-Two-Cookies.jpg",
-    "cocacola": "https://upload.wikimedia.org/wikipedia/commons/1/1b/Coca-Cola_can.jpg"
-}
-
 suggestions = {
     "maggie": ["cocacola", "lays"],
     "oreo": ["cocacola"],
@@ -91,12 +45,35 @@ suggestions = {
 if "cart" not in st.session_state:
     st.session_state.cart = {}
 
-if "last_added" not in st.session_state:
-    st.session_state.last_added = None
+if "last_detect_time" not in st.session_state:
+    st.session_state.last_detect_time = 0
+
+# -------------------- VOICE --------------------
+def speak(text):
+    engine = pyttsx3.init()
+    engine.say(text)
+    engine.runAndWait()
+
+def listen():
+    r = sr.Recognizer()
+    with sr.Microphone() as source:
+        st.info("Listening...")
+        audio = r.listen(source)
+    try:
+        command = r.recognize_google(audio).lower()
+        return command
+    except:
+        return ""
+
+# -------------------- HEADER --------------------
+st.title("🧠 Neural Cart")
 
 # -------------------- CAMERA --------------------
-st.markdown("### 📷 Scan Product")
-img = st.camera_input("Take a picture")
+st.subheader("📷 Scan Product")
+img = st.camera_input("Capture")
+
+detected_label = None
+confidence = 0
 
 if img is not None:
     image = Image.open(img).convert("RGB")
@@ -105,88 +82,101 @@ if img is not None:
     image = (np.array(image).astype(np.float32) / 127.5) - 1
     image = np.reshape(image, (1, 224, 224, 3))
 
-    prediction = model.predict(image, verbose=0)
-    index = np.argmax(prediction)
-    label = class_names[index]
-    confidence = float(prediction[0][index])
+    prediction = model.predict(image, verbose=0)[0]
 
-    # -------------------- DETECTION UI --------------------
-    st.markdown(f"""
-    <div class="card">
-    <h3>🧠 Detected Item</h3>
-    <h2>{label.upper()}</h2>
-    <p>Confidence: {confidence:.2f}</p>
-    </div>
-    """, unsafe_allow_html=True)
+    top2 = np.argsort(prediction)[-2:]
+    best, second = top2[-1], top2[-2]
 
-    col1, col2 = st.columns(2)
+    detected_label = class_names[best]
+    confidence = prediction[best]
+    gap = prediction[best] - prediction[second]
 
-    with col1:
-        if label in images:
-            st.image(images[label], use_container_width=True)
-
-    with col2:
-        st.markdown(f"""
-        **Item:** {label.upper()}  
-        **Confidence:** {confidence:.2f}
-        """)
-
-    # -------------------- AUTO ADD --------------------
-    if confidence > 0.90:
-        if label in prices and st.session_state.last_added != label:
-            st.session_state.cart[label] = st.session_state.cart.get(label, 0) + 1
-            st.session_state.last_added = label
-            st.success(f"🛒 {label} added automatically")
-
+    # ---------------- SMART FILTER ----------------
+    if confidence < 0.85 or gap < 0.15:
+        st.warning("❌ Nothing confidently detected")
+        detected_label = None
     else:
-        st.warning("⚠️ Low confidence. Try again.")
+        st.success(f"Detected: {detected_label} ({confidence:.2f})")
 
-# -------------------- DIVIDER --------------------
-st.markdown("---")
+# ---------------- MANUAL FIX ----------------
+if detected_label:
+    choice = st.selectbox("Correct item if wrong:", class_names, index=class_names.index(detected_label))
 
-# -------------------- CART --------------------
-st.markdown("### 🛒 Your Cart")
+    if st.button("➕ Add Item"):
+        now = time.time()
+        if now - st.session_state.last_detect_time > 3:
+            st.session_state.cart[choice] = st.session_state.cart.get(choice, 0) + 1
+            st.session_state.last_detect_time = now
+            speak(f"{choice} added")
+        else:
+            st.warning("Wait before scanning again")
+
+# ---------------- VOICE CONTROL ----------------
+st.subheader("🎤 Voice Commands")
+
+if st.button("Start Voice"):
+    cmd = listen()
+
+    if "add" in cmd:
+        for item in prices:
+            if item in cmd:
+                st.session_state.cart[item] = st.session_state.cart.get(item, 0) + 1
+                speak(f"{item} added")
+
+    elif "remove" in cmd:
+        for item in list(st.session_state.cart.keys()):
+            if item in cmd:
+                del st.session_state.cart[item]
+                speak(f"{item} removed")
+
+# ---------------- CART --------------------
+st.subheader("🛒 Cart")
 
 total = 0
 
-if not st.session_state.cart:
-    st.info("Cart is empty")
-else:
-    for item, qty in st.session_state.cart.items():
-        item_total = prices[item] * qty
+for item, qty in list(st.session_state.cart.items()):
+    col1, col2, col3, col4 = st.columns([3,1,1,1])
 
-        st.markdown(f"""
-        <div class="card">
-        <b>{item.upper()}</b><br>
-        Quantity: {qty}<br>
-        Total: ₹{item_total}
-        </div>
-        """, unsafe_allow_html=True)
+    col1.write(f"{item.upper()} - ₹{prices[item]}")
 
-        total += item_total
+    if col2.button("➕", key=f"add_{item}"):
+        st.session_state.cart[item] += 1
 
-# -------------------- TOTAL --------------------
-st.metric("💰 Total Bill", f"₹{total}")
+    if col3.button("➖", key=f"sub_{item}"):
+        if qty > 1:
+            st.session_state.cart[item] -= 1
+        else:
+            del st.session_state.cart[item]
 
-# -------------------- SUGGESTIONS --------------------
-st.markdown("### 🧠 Smart Suggestions")
+    if col4.button("❌", key=f"del_{item}"):
+        del st.session_state.cart[item]
+
+    total += prices[item] * qty
+
+st.metric("Total", f"₹{total}")
+
+# ---------------- SMART SUGGESTIONS ----------------
+st.subheader("🧠 Smart Suggestions")
+
+recommended = set()
 
 for item in st.session_state.cart:
     if item in suggestions:
-        for sug in suggestions[item]:
-            if sug not in st.session_state.cart:
-                st.write(f"👉 People also buy: {sug}")
+        recommended.update(suggestions[item])
 
-# -------------------- BILL --------------------
+for r in recommended:
+    if r not in st.session_state.cart:
+        if st.button(f"Add {r}"):
+            st.session_state.cart[r] = 1
+
+# ---------------- BILL --------------------
 if st.button("🧾 Generate Bill"):
-    st.markdown("### 🧾 Final Bill")
+    st.subheader("Final Bill")
     for item, qty in st.session_state.cart.items():
-        st.write(f"{item.upper()} x{qty} = ₹{prices[item]*qty}")
-    st.write("------")
+        st.write(f"{item} x{qty} = ₹{prices[item]*qty}")
     st.write(f"**Total: ₹{total}**")
 
-# -------------------- CLEAR --------------------
+# ---------------- CLEAR --------------------
 if st.button("🗑 Clear Cart"):
     st.session_state.cart = {}
-    st.session_state.last_added = None
     st.rerun()
