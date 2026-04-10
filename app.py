@@ -74,11 +74,20 @@ if "last_detect_time" not in st.session_state:
     st.session_state.last_detect_time = 0
 
 # -------------------- VOICE --------------------
-def speak(text):
-    engine = pyttsx3.init()
-    engine.say(text)
-    engine.runAndWait()
+import platform
 
+def speak(text):
+    try:
+        if platform.system() == "Windows":
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.say(text)
+            engine.runAndWait()
+        else:
+            # Cloud environment → skip voice
+            pass
+    except:
+        pass
 def listen():
     r = sr.Recognizer()
     with sr.Microphone() as source:
