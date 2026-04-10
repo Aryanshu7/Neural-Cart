@@ -75,9 +75,7 @@ if "last_detect_time" not in st.session_state:
 
 # -------------------- VOICE --------------------
 def speak(text):
-    engine = pyttsx3.init()
-    engine.say(text)
-    engine.runAndWait()
+    st.toast(f"🔊 {text}")  # simple UI feedback instead of voice
 
 def listen():
     r = sr.Recognizer()
