@@ -5,7 +5,32 @@ from PIL import Image
 import time
 import speech_recognition as sr
 import pyttsx3
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+import tempfile
 
+def create_pdf(cart, prices, total):
+    styles = getSampleStyleSheet()
+
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    doc = SimpleDocTemplate(temp_file.name)
+
+    elements = []
+
+    elements.append(Paragraph("Neural Cart - Bill", styles['Title']))
+    elements.append(Spacer(1, 10))
+
+    for item, qty in cart.items():
+        line = f"{item.upper()} x{qty} = ₹{prices[item]*qty}"
+        elements.append(Paragraph(line, styles['Normal']))
+        elements.append(Spacer(1, 5))
+
+    elements.append(Spacer(1, 10))
+    elements.append(Paragraph(f"Total: ₹{total}", styles['Heading2']))
+
+    doc.build(elements)
+
+    return temp_file.name
 # -------------------- CONFIG --------------------
 st.set_page_config(page_title="Neural Cart", layout="centered")
 
@@ -137,7 +162,12 @@ total = 0
 for item, qty in list(st.session_state.cart.items()):
     col1, col2, col3, col4 = st.columns([3,1,1,1])
 
-    col1.write(f"{item.upper()} - ₹{prices[item]}")
+    col1.markdown(f"""
+    **🧾 {item.upper()}**  
+    Qty: {qty}  
+    Price: ₹{prices[item]} each  
+    Total: ₹{prices[item]*qty}
+    """)
 
     if col2.button("➕", key=f"add_{item}"):
         st.session_state.cart[item] += 1
@@ -152,7 +182,6 @@ for item, qty in list(st.session_state.cart.items()):
         del st.session_state.cart[item]
 
     total += prices[item] * qty
-
 st.metric("Total", f"₹{total}")
 
 # ---------------- SMART SUGGESTIONS ----------------
@@ -171,10 +200,18 @@ for r in recommended:
 
 # ---------------- BILL --------------------
 if st.button("🧾 Generate Bill"):
-    st.subheader("Final Bill")
-    for item, qty in st.session_state.cart.items():
-        st.write(f"{item} x{qty} = ₹{prices[item]*qty}")
-    st.write(f"**Total: ₹{total}**")
+    if not st.session_state.cart:
+        st.warning("Cart is empty")
+    else:
+        pdf_path = create_pdf(st.session_state.cart, prices, total)
+
+        with open(pdf_path, "rb") as f:
+            st.download_button(
+                label="📥 Download Bill PDF",
+                data=f,
+                file_name="NeuralCart_Bill.pdf",
+                mime="application/pdf"
+            )
 
 # ---------------- CLEAR --------------------
 if st.button("🗑 Clear Cart"):
